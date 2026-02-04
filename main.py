@@ -16,7 +16,7 @@ def get_combined_report(loc_name, nx, ny, station):
     now = datetime.now()
     base_date = now.strftime("%Y%m%d")
     
-    # 1. 날씨 데이터 (단기예보)
+    # 1. 날씨 데이터 (단기예보) - 05시 발표 데이터 기준
     url_w = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
     params_w = {
         'serviceKey': requests.utils.unquote(SERVICE_KEY),
@@ -24,45 +24,55 @@ def get_combined_report(loc_name, nx, ny, station):
         'base_date': base_date, 'base_time': '0500', 'nx': nx, 'ny': ny
     }
     
-    # 2. 미세먼지 데이터
+    # 2. 미세먼지 데이터 (에어코리아)
     url_d = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty"
     params_d = {
         'serviceKey': requests.utils.unquote(SERVICE_KEY),
         'returnType': 'json', 'numOfRows': '1', 'stationName': station, 'dataTerm': 'DAILY', 'ver': '1.0'
     }
 
+    report_parts = [f"📍 {loc_name}"]
+    
+    # 날씨 정보 처리
     try:
-        # 날씨 파싱
         w_res = requests.get(url_w, params=params_w, timeout=10).json()
-        items = w_res['response']['body']['items']['item']
-        tmn = next(i['fcstValue'] for i in items if i['category'] == 'TMN')
-        tmx = next(i['fcstValue'] for i in items if i['category'] == 'TMX')
-        sky = next(i['fcstValue'] for i in items if i['category'] == 'SKY')
-        sky_name = {'1': '맑음☀️', '3': '구름많음☁️', '4': '흐림☁️'}.get(sky, "정보없음")
-
-        # 미세먼지 파싱
-        d_res = requests.get(url_d, params=params_d, timeout=10).json()
-        d_item = d_res['response']['body']['items'][0]
-        pm10 = d_item.get('pm10Value', '-')
-        pm25 = d_item.get('pm25Value', '-')
-
-        return (
-            f"📍 {loc_name} 리포트\n"
-            f"🌡️ 최저 {tmn}°C / 최고 {tmx}°C\n"
-            f"☁️ 하늘: {sky_name}\n"
-            f"😷 미세먼지: {pm10} / 초미세: {pm25}\n"
-        )
+        if 'item' in w_res.get('response', {}).get('body', {}).get('items', {}):
+            items = w_res['response']['body']['items']['item']
+            tmn = next((i['fcstValue'] for i in items if i['category'] == 'TMN'), "-")
+            tmx = next((i['fcstValue'] for i in items if i['category'] == 'TMX'), "-")
+            sky = next((i['fcstValue'] for i in items if i['category'] == 'SKY'), "1")
+            sky_name = {'1': '맑음☀️', '3': '구름많음☁️', '4': '흐림☁️'}.get(sky, "정보없음")
+            report_parts.append(f"🌡️ 기온: {tmn}°C / {tmx}°C")
+            report_parts.append(f"☁️ 하늘: {sky_name}")
+        else:
+            report_parts.append("🌡️ 날씨: API 승인 대기 중")
     except:
-        return f"📍 {loc_name}: 데이터 업데이트 중입니다.\n"
+        report_parts.append("🌡️ 날씨: 호출 실패")
+
+    # 미세먼지 정보 처리
+    try:
+        d_res = requests.get(url_d, params=params_d, timeout=10).json()
+        if 'items' in d_res.get('response', {}).get('body', {}):
+            d_item = d_res['response']['body']['items'][0]
+            pm10 = d_item.get('pm10Value', '-')
+            pm25 = d_item.get('pm25Value', '-')
+            report_parts.append(f"😷 미세먼지: {pm10} / 초미세: {pm25}")
+        else:
+            report_parts.append("😷 미세먼지: 데이터 점검 중")
+    except:
+        report_parts.append("😷 미세먼지: 호출 실패")
+
+    return "\n".join(report_parts) + "\n"
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": text})
 
 if __name__ == "__main__":
-    final_msg = f"📅 {datetime.now().strftime('%m월 %d일')} 통합 날씨 리포트\n\n"
+    current_date = datetime.now().strftime('%m월 %d일')
+    header = f"📅 {current_date} 통합 날씨 리포트\n\n"
+    body = ""
     for loc in LOCATIONS:
-        final_msg += get_combined_report(loc[0], loc[1], loc[2], loc[3]) + "\n"
+        body += get_combined_report(loc[0], loc[1], loc[2], loc[3]) + "\n"
     
-    final_msg += "오늘도 지안이랑 행복한 하루 되세요! 😊"
-    send_telegram(final_msg)
+    send_telegram(header + body)
