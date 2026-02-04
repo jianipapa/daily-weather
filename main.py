@@ -11,66 +11,43 @@ LOCATIONS = [
     ["당산역 (영등포구)", 58, 126, "영등포구"]
 ]
 
-def get_dust_grade(val, is_pm10=True):
-    if not val or not val.isdigit(): return "측정중"
-    v = int(val)
-    if is_pm10: # 미세먼지 기준
-        if v <= 30: return "좋음💙"
-        if v <= 80: return "보통💚"
-        if v <= 150: return "나쁨🧡"
-        return "매우나쁨❤️"
-    else: # 초미세먼지 기준
-        if v <= 15: return "좋음💙"
-        if v <= 35: return "보통💚"
-        if v <= 75: return "나쁨🧡"
-        return "매우나쁨❤️"
-
-def get_styled_report(loc_name, nx, ny, station):
+def get_report(loc_name, nx, ny, station):
     now = datetime.now()
     base_date = now.strftime("%Y%m%d")
+    report = f"📍 *{loc_name}*\n━━━━━━━━━━━━━━\n"
     
-    url_ncst = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst"
-    url_fcst = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
-    url_dust = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty"
-
-    # 실시간 데이터 시간 설정
-    base_time_ncst = now.strftime("%H00") if now.minute >= 45 else f"{now.hour-1:02d}00" if now.hour > 0 else "2300"
-    
-    report = f"📍 *{loc_name}*\n"
-    report += "━━━━━━━━━━━━━━\n"
-
+    # 1. 날씨 시도
     try:
-        # 1. 기온 정보 (실시간 및 예보)
-        nc_res = requests.get(url_ncst, params={'serviceKey': requests.utils.unquote(SERVICE_KEY), 'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time_ncst, 'nx': nx, 'ny': ny}, timeout=10).json()
-        cur_t = next(i['obsrValue'] for i in nc_res['response']['body']['items']['item'] if i['category'] == 'T1H')
-        
-        fc_res = requests.get(url_fcst, params={'serviceKey': requests.utils.unquote(SERVICE_KEY), 'pageNo': '1', 'numOfRows': '200', 'dataType': 'JSON', 'base_date': base_date, 'base_time': '0500', 'nx': nx, 'ny': ny}, timeout=10).json()
-        f_items = fc_res['response']['body']['items']['item']
-        tmn = next(i['fcstValue'] for i in f_items if i['category'] == 'TMN')
-        tmx = next(i['fcstValue'] for i in f_items if i['category'] == 'TMX')
-        
-        report += f"🌡  *현재 {cur_t}°C* (최저 {tmn}°/최고 {tmx}°)\n"
+        url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+        params = {'serviceKey': requests.utils.unquote(SERVICE_KEY), 'pageNo': '1', 'numOfRows': '50', 'dataType': 'JSON', 'base_date': base_date, 'base_time': '0500', 'nx': nx, 'ny': ny}
+        res = requests.get(url, params=params, timeout=10).json()
+        items = res['response']['body']['items']['item']
+        tmn = next(i['fcstValue'] for i in items if i['category'] == 'TMN')
+        tmx = next(i['fcstValue'] for i in items if i['category'] == 'TMX')
+        report += f"🌡  기온: 최저 {tmn}° / 최고 {tmx}°\n"
     except:
-        report += "🌡  날씨 정보 점검 중\n"
+        report += "🌡  날씨: 데이터 준비 중\n"
 
+    # 2. 미세먼지 시도
     try:
-        # 2. 미세먼지 정보
-        d_res = requests.get(url_dust, params={'serviceKey': requests.utils.unquote(SERVICE_KEY), 'returnType': 'json', 'stationName': station, 'dataTerm': 'DAILY', 'ver': '1.0'}, timeout=10).json()
-        d_item = d_res['response']['body']['items'][0]
-        pm10, pm25 = d_item.get('pm10Value'), d_item.get('pm25Value')
-        
-        report += f"😷  미세먼지: {pm10 if pm10 else '-'} ({get_dust_grade(pm10, True)})\n"
-        report += f"🌫  초미세먼지: {pm25 if pm25 else '-'} ({get_dust_grade(pm25, False)})\n"
+        url = "http://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty"
+        params = {'serviceKey': requests.utils.unquote(SERVICE_KEY), 'returnType': 'json', 'stationName': station, 'dataTerm': 'DAILY', 'ver': '1.0'}
+        res = requests.get(url, params=params, timeout=10).json()
+        item = res['response']['body']['items'][0]
+        pm10 = item.get('pm10Value', '-')
+        report += f"😷  미세먼지: {pm10} ㎍/㎥\n"
     except:
-        report += "😷  먼지 정보 점검 중\n"
+        report += "😷  먼지: 데이터 점검 중\n"
 
     return report + "\n"
 
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"})
-
 if __name__ == "__main__":
-    header = f"🗓 *{datetime.now().strftime('%m월 %d일')} 통합 날씨 리포트*\n\n"
-    body = "".join(get_styled_report(loc[0], loc[1], loc[2], loc[3]) for loc in LOCATIONS)
-    send_telegram(header + body)
+    header = f"🗓 *{datetime.now().strftime('%m월 %d일')} 날씨 리포트*\n\n"
+    content = ""
+    for loc in LOCATIONS:
+        content += get_report(loc[0], loc[1], loc[2], loc[3])
+    
+    # 메시지 전송 테스트용 출력
+    print(header + content)
+    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
+                  data={"chat_id": CHAT_ID, "text": header + content, "parse_mode": "Markdown"})
