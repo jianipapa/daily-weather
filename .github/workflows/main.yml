@@ -2,9 +2,10 @@ name: Daily Weather Bot
 
 on:
   schedule:
-    # 한국 시간 기준 오전 6시 45분 예약 (GitHub 실행 지연 고려)
-    - cron: '45 21 * * *'
-  workflow_dispatch: # 언제든 수동으로 실행해볼 수 있는 버튼
+    # 한국 시간(KST) 오전 5시 15분 실행 예약 (UTC 20:15)
+    # 정각(00분)을 피해서 설정하면 서버 배정 순번이 훨씬 빠릅니다.
+    - cron: '15 20 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
